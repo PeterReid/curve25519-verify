@@ -74,7 +74,21 @@
 			   (p (prime-25519)))
 		 (:instance foozle2-helper)
 		 (:instance reduce-*-2^256 (x (floor x (2^256))))) )))
+
+(defun maybe-subtract-p25519 (x)
+  (if (< x (prime-25519))
+      x
+    (- x (prime-25519))))
+  
 		       
+(defthm maybe-subtract-p25519-works
+  (implies (and (natp x)
+		(natp (prime-25519))
+		(< x (* 2 (prime-25519))))
+	   (equal (maybe-subtract-p25519 x)
+		  (mod x (prime-25519)))))
+
+
 (defthm foozle
   (implies (and (natp x)
 		)
