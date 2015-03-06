@@ -1,0 +1,92 @@
+(include-book "arithmetic-5/top" :dir :system)
+
+(defun prime-25519 ()
+  (- (expt 2 255) 19))
+
+(defun mul-25519 (x y)
+  (mod (* x y) (prime-25519)))
+
+;    x*y mod p25519
+; = ( (x*y mod 2^256) + (x*y floor 2^256)*2^256 ) mod p25519
+
+; (a * 2^256) mod p25519
+; = (a * (p25519 + p25519 + 38)) mod p25519
+; = (a*p25519 mod p25519) + (a*p25519 mod p25519) + (a*38 mod p25519)
+
+(defun 2^256 () (expt 2 256))
+(defthm 2^256-parts
+  (equal (2^256)
+	 (+ (prime-25519) (prime-25519) 38)))
+(in-theory (disable 2^256))
+
+(defthm prime-25519-natp
+  (natp (prime-25519))
+  :rule-classes :type-prescription)
+
+(defthm +-over-mod
+  (implies (and (natp x)
+		(natp z)
+		(natp p))
+	   (equal (mod (+ (mod z p) (mod x p)) p)
+		  (mod (+ z x) p))))
+
+(defthm reduce-*-2^256
+  (implies (natp x)
+	   (equal (mod (* x (2^256)) (prime-25519))
+		  (mod (* x 38) (prime-25519))))
+  :hints (("Goal"
+	   :use (:instance +-over-mod
+			   (x (* x 38))
+			   (z (* 2 (prime-25519) x))
+			   (p (prime-25519))))))
+	
+;(in-theory (enable prime-25519 2^256))
+	  
+;(defun mod-disable (x y) (mod x y))
+;(in-theory (disable mod-disable))
+
+;(in-theory (disable prime-25519 2^256))
+
+; These are some trivial type implications, but we very carefully control what rules foozle2
+; can apply such that it can't derive them. So we derive them here and then hand them off.
+(defthm foozle2-helper
+  (implies (natp x)
+	   (and	(natp (mod x (2^256)))
+		(natp (* (floor x (2^256)) (2^256)))
+		(natp (prime-25519))
+		(natp (floor x (2^256)))))
+  :rule-classes nil)
+	    
+
+(defthm foozle2
+  (implies (natp x)
+	   (equal (mod x (prime-25519))
+		  (mod (+ (mod (mod x (2^256)) (prime-25519))
+			  (mod (* (floor x (2^256))
+				  38) 
+			       (prime-25519)))
+		       (prime-25519))))
+  :hints (("Goal" :in-theory '(natp |(* y x)| floor-mod-elim 2^256)
+	   :use ((:instance +-over-mod
+			   (z (mod x (2^256)))
+			   (x (* (floor x (2^256))
+				 (2^256)))
+			   (p (prime-25519)))
+		 (:instance foozle2-helper)
+		 (:instance reduce-*-2^256 (x (floor x (2^256))))) )))
+		       
+(defthm foozle
+  (implies (and (natp x)
+		)
+	   (equal (mod x (prime-25519))
+		  (mod (+ (mod x (2^256))
+		     (* (floor x (2^256))
+			(2^256))) (prime-25519))))
+  :hints (("Goal" :in-theory '(natp |(* y x)| floor-mod-elim +-over-mod))))	   
+  :rule-classes nil)
+
+
+	  
+
+
+
