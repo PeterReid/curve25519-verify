@@ -1,3 +1,5 @@
+(include-book "u8")
+
 (defconst *empty-cpu* '((:cycle . 0) (:pc . 0)))
 
 (defun data-key (index)
@@ -8,16 +10,6 @@
 
 (defun set-reg (cpu reg value)
   (set-data cpu reg value))
-
-(defun u8p (x)
-  (and (integerp x)
-       (<= 0 x)
-       (< x 256)))
-
-(defun u8-fix (x)
-  (if (u8p x)
-      x
-    0))
 
 (defun get-reg (cpu reg)
   (u8-fix (cdr (assoc (data-key reg) cpu))))
@@ -45,13 +37,17 @@
   (put-assoc-equal :pc (1+ (get-pc cpu))
 	(advance-cycle cpu 1)))
 
-
-
 (defun exec-ldi (cpu dest-reg immediate)
   (pc-cycle-increment (set-reg cpu dest-reg immediate)))
 
 (defun u8+ (x y)
-  (logand (+ x y) 255))
+  (if (< (+ (u8-fix x) (u8-fix y)) 256)
+      (+ (u8-fix x) (u8-fix y))
+    (+ (u8-fix x) (u8-fix y) -256)))
+  ;(logand (+ x y) 255))
+
+(defun u8+-carry-bit (x y)
+  (<= 256 (+ (u8-fix x) (u8-fix y))))
 
 (defun u8-xor (x y)
   (logxor x y))
@@ -73,10 +69,19 @@
 
 ; TODO: Flags
 (defun exec-add (cpu dest-reg src-reg)
-  (pc-cycle-increment (set-reg cpu 
-			       dest-reg
-			       (u8+ (get-reg cpu dest-reg)
-				    (get-reg cpu src-reg)))))
+  (pc-cycle-increment 
+   ;(set-reg 
+    (set-reg cpu 
+	     dest-reg
+	     (u8+ (get-reg cpu dest-reg)
+		  (get-reg cpu src-reg)))
+   ; *status-reg*
+   ; (set-bit (get-reg cpu *status-reg*)
+;	     *carry-bit*
+))	     
+
+  ;  )))
+  
 
 ; TODO: Flags
 (defun exec-eor (cpu dest-reg src-reg)
@@ -158,20 +163,6 @@
 	      (first words))))
 
 (defun ldi-ldi-prog () '(#xE0A0 #xE0B1 #x0FAB #x0FAB #x27AB))
-
-(defun u8-cases (n)
-  (if (zp n)
-      nil
-    (cons `(equal x ,(- n 1))
-	  (u8-cases (- n 1)))))
-
-(defmacro defthm-by-u8-cases (name body &rest args)
-  `(defthm ,name
-     ,body
-     ,@args
-     :hints (("Goal"
-	      :cases ,(u8-cases 256)))))
-	
 
 ;(defthm-by-u8-cases u8-and-1-is-mod
 ;  (implies (u8p x)
@@ -272,6 +263,7 @@
 	   (equal (u8-and #xFF x)
 		  x)))
 
+; TODO: This may not be necessary
 (defthm hmm2
   (implies (and (u8p x)
 		(u8p y))
