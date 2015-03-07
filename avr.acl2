@@ -1,0 +1,79 @@
+(defconst *empty-cpu* '((:cycle . 0) (:pc . 0)))
+
+(defun data-key (index)
+  (cons :data index))
+
+(defun set-data (cpu index value)
+  (put-assoc-equal (data-key index) value cpu))
+
+(defun set-reg (cpu reg value)
+  (set-data cpu reg value))
+
+(defun get-reg (cpu reg)
+  (cdr (assoc (data-key reg) cpu)))
+
+(defun prog-key (word-index)
+  (cons :prog word-index))
+
+; address indexes a 16-bit word, not a byte
+(defun get-prog (cpu word-index)
+  (cdr (assoc (prog-key word-index) cpu)))
+
+(defun set-prog (cpu word-index value)
+  (put-assoc-equal (prog-key word-index) value cpu))
+
+(defun get-pc (cpu)
+  (cdr (assoc :pc cpu)))
+
+(defun get-cycle (cpu)
+  (cdr (assoc :cycle cpu)))
+
+(defun advance-cycle (cpu amt)
+  (put-assoc-equal :cycle (+ amt (get-cycle cpu)) cpu))
+
+(defun pc-cycle-increment (cpu)
+  (put-assoc-equal :pc (1+ (get-pc cpu))
+	(advance-cycle cpu 1)))
+
+
+
+(defun exec-ldi (cpu dest-reg immediate)
+  (pc-cycle-increment (set-reg cpu dest-reg immediate)))
+
+(defun u8+ (x y)
+  (logand (+ x y) 255))
+
+; TODO: Flags
+(defun exec-add (cpu dest-reg src-reg)
+  (pc-cycle-increment (set-reg cpu 
+			       dest-reg
+			       (u8+ (get-reg cpu dest-reg)
+				    (get-reg cpu src-reg)))))
+
+(defun current-instruction (cpu)
+  (get-prog cpu (get-pc cpu)))
+
+(defun decode-high-dest-reg (instruction)
+  (+ 16 (ash (logand instruction #x00F0) -4)))
+
+(defun decode-immediate-16 (instruction)
+  (logior (logand instruction #x000F)
+	  (ash (logand instruction #x0F00) -4)))
+
+(defun cpu-step (cpu)
+  (let ((instruction (current-instruction cpu)))
+    (case (logand instruction #xF000)
+	  (#xE000 (exec-ldi cpu (decode-high-dest-reg instruction) (decode-immediate-16 instruction))))))
+
+	   
+(defun write-prog-words (cpu words idx)
+  (if (endp words)
+      cpu
+    (set-prog (write-prog-words cpu (rest words) (1+ idx))
+	      idx
+	      (first words))))
+
+(defun ldi-ldi-prog () '(#xE0A0 #xE0B1))
+
+  
+(cpu-step (cpu-step (write-prog-words *empty-cpu* (ldi-ldi-prog) 0)))
