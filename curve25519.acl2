@@ -85,6 +85,34 @@
 		  (mod x (prime-25519)))))
 
 
+; we have, as state
+; - n with p25519s subtracted off
+; - n with 2^255s subtracted off
+; - total p25519s subtracted off
+; - total 2^255s subtractted off
+; - maybe just the original instead of those two?
+; - Our current power of 2
+; - Out current p25519 *2^n
+
+; We need to prove that
+; - n with 2^255s subtracted off gets down below 2^255
+; - n with p25519s subtracted off stays with some fixed bound of n with 2^255s subtracted off.
+
+(defun reduce-by-powers-of-2 (steps n reducer comparer)
+  (if (zp steps)
+      n
+    (reduce-by-powers-of-2 (- steps 1)
+			   (if (<= comparer n) (- n reducer) n)
+			   (/ reducer 2)
+			   (/ comparer 2))))
+			     
+
+(defthm reduce-step-works
+  (implies (and (natp b)
+		(natb reduce-tester)
+		(natb reduce-by))
+
+	   (
 	  
 
 
