@@ -56,6 +56,14 @@
 (defun u8-xor (x y)
   (logxor x y))
 
+(defun u8-and (x y)
+  (u8-fix (logand x y)))
+
+(defthm u8p-u8-and
+  (u8p (u8-and x y))
+  :rule-classes (:type-prescription))
+
+
 ; TODO: Flags
 (defun exec-add (cpu dest-reg src-reg)
   (pc-cycle-increment (set-reg cpu 
@@ -69,6 +77,12 @@
 			       dest-reg
 			       (u8-xor (get-reg cpu dest-reg)
 				       (get-reg cpu src-reg)))))
+
+(defun exec-mov (cpu dest-reg src-reg)
+  (pc-cycle-increment (set-reg cpu dest-reg (get-reg cpu src-reg))))
+
+(defun exec-andi (cpu reg immediate)
+  (pc-cycle-increment (set-reg cpu reg (u8-and (get-reg cpu reg) immediate))))
 
 (defun current-instruction (cpu)
   (get-prog cpu (get-pc cpu)))
@@ -101,6 +115,10 @@
 	   (exec-add cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
 	  ((equal (opcode-6 instruction) #x2400)
 	   (exec-eor cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
+	  ((equal (opcode-6 instruction) #x2C00)
+	   (exec-mov cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
+	  ((equal (opcode-4 instruction) #x7000)
+	   (exec-andi cpu (decode-high-dest-reg instruction) (decode-immediate-16 instruction)))
 	  )))
 
 
@@ -124,15 +142,23 @@
     (cons `(equal x ,(- n 1))
 	  (u8-cases (- n 1)))))
 
-(defmacro u8-xor-0-by-u8-cases ()
-  `(defthm u8-xor-0
-    (implies (u8p x)
-	     (equal (u8-xor x x)
-		    0))
-    :hints (("Goal"
-	     :cases ,(u8-cases 256)))))
-		    
-(u8-xor-0-by-u8-cases)
+(defmacro defthm-by-u8-cases (name body &rest args)
+  `(defthm ,name
+     ,body
+     ,@args
+     :hints (("Goal"
+	      :cases ,(u8-cases 256)))))
+	
+
+(defthm-by-u8-cases u8-and-1-is-mod
+  (implies (u8p x)
+	   (equal (u8-and x 1)
+		  (mod x 2))))
+	    
+(defthm-by-u8-cases u8-xor-0
+  (implies (u8p x)
+	   (equal (u8-xor x x)
+		  0)))
 
 (defthm assoc-equal-ignores-other-put-assoc
   (implies (not (equal a b))
@@ -174,7 +200,7 @@
 	   (equal (get-reg (set-reg cpu a x) b)
 		  (get-reg cpu b))))
 
-(defconst *mul-8-8-prog* '(#x2422 #x2433 #x2466 #xE017 #x2D04 #x0701 #x9501))
+(defconst *mul-8-8-prog* '(#x2422 #x2433 #x2466 #xE017 #x2D04 #x7001 #x9501))
 
 
 
@@ -193,13 +219,20 @@
   (u8p (get-reg cpu r))
   :rule-classes (:type-prescription))
 
+(defthm-by-u8-cases mod-2-u8p
+  (implies (u8p x)
+	   (u8p (mod x 2)))
+  :rule-classes (:type-prescription))
+
 (defthm reloc-mul-8-8-prelude
   (implies (and (has-prog-mems *mul-8-8-prog* cpu (get-pc cpu))
 		)
-	   (equal (get-reg (cpu-n-step 2 cpu) 3)
-		  0))
+	   (and
+	    (equal (mod (get-reg cpu 4) 2) (get-reg (cpu-n-step 6 cpu) 16))
+	    (equal (get-reg (cpu-n-step 6 cpu) 17) 7))
+	    )
   :hints (("Goal" 
-	   :in-theory (disable get-reg get-prog u8p set-prog get-pc set-reg u8-xor pc-cycle-increment)
+	   :in-theory (disable get-reg get-prog u8p set-prog get-pc mod set-reg u8-xor u8-and pc-cycle-increment)
 	   :expand (:free (n c) (cpu-n-step n c)))))
   
 (cpu-n-step 4 (write-prog-words *empty-cpu* (ldi-ldi-prog) 0)))
