@@ -43,12 +43,22 @@
 (defun u8+ (x y)
   (logand (+ x y) 255))
 
+(defun u8-xor (x y)
+  (logxor x y))
+
 ; TODO: Flags
 (defun exec-add (cpu dest-reg src-reg)
   (pc-cycle-increment (set-reg cpu 
 			       dest-reg
 			       (u8+ (get-reg cpu dest-reg)
 				    (get-reg cpu src-reg)))))
+
+; TODO: Flags
+(defun exec-eor (cpu dest-reg src-reg)
+  (pc-cycle-increment (set-reg cpu
+			       dest-reg
+			       (u8-xor (get-reg cpu dest-reg)
+				       (get-reg cpu src-reg)))))
 
 (defun current-instruction (cpu)
   (get-prog cpu (get-pc cpu)))
@@ -60,11 +70,34 @@
   (logior (logand instruction #x000F)
 	  (ash (logand instruction #x0F00) -4)))
 
+(defun opcode-4 (instruction)
+  (logand instruction #xF000))
+
+(defun opcode-6 (instruction)
+  (logand instruction #xFC00))
+
+(defun decode-dest-reg (instruction)
+  (ash (logand instruction #x01F0) -4))
+
+(defun decode-src-reg (instruction)
+  (logior (logand instruction #x000F)
+	  (ash (logand instruction #x0200) -5)))
+
 (defun cpu-step (cpu)
   (let ((instruction (current-instruction cpu)))
-    (case (logand instruction #xF000)
-	  (#xE000 (exec-ldi cpu (decode-high-dest-reg instruction) (decode-immediate-16 instruction))))))
+    (cond ((equal (opcode-4 instruction) #xE000) 
+	   (exec-ldi cpu (decode-high-dest-reg instruction) (decode-immediate-16 instruction)))
+	  ((equal (opcode-6 instruction) #x0C00)
+	   (exec-add cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
+	  ((equal (opcode-6 instruction) #x2400)
+	   (exec-eor cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
+	  )))
 
+
+(defun cpu-n-step (n cpu)
+  (if (zp n)
+      cpu
+    (cpu-n-step (- n 1) (cpu-step cpu))))
 	   
 (defun write-prog-words (cpu words idx)
   (if (endp words)
@@ -73,7 +106,28 @@
 	      idx
 	      (first words))))
 
-(defun ldi-ldi-prog () '(#xE0A0 #xE0B1))
+(defun ldi-ldi-prog () '(#xE0A0 #xE0B1 #x0FAB #x0FAB))
+
+(defun u8-cases (x)
+  (if (zp x)
+      nil
+    (cons `(equal x ,(- x 1))
+	  (u8-1d-cases (- x 1)))))
+  
+(defmacro u8-xor-0-by-u8-cases ()
+  `(defthm u8-xor-0
+    (implies (and (natp x) (< x 256))
+	     (equal (u8-xor x x)
+		    0))
+    :hints (("Goal"
+	     :cases ,(u8-cases 256)))))
+		    
+(u8-xor-0-by-u8-cases)
+
+
+
 
   
-(cpu-step (cpu-step (write-prog-words *empty-cpu* (ldi-ldi-prog) 0)))
+(cpu-n-step 4 (write-prog-words *empty-cpu* (ldi-ldi-prog) 0)))
+
+(include-book "foo" :dir :system)
