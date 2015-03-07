@@ -9,8 +9,18 @@
 (defun set-reg (cpu reg value)
   (set-data cpu reg value))
 
+(defun u8p (x)
+  (and (integerp x)
+       (<= 0 x)
+       (< x 256)))
+
+(defun u8-fix (x)
+  (if (u8p x)
+      x
+    0))
+
 (defun get-reg (cpu reg)
-  (cdr (assoc (data-key reg) cpu)))
+  (u8-fix (cdr (assoc (data-key reg) cpu))))
 
 (defun prog-key (word-index)
   (cons :prog word-index))
@@ -108,15 +118,15 @@
 
 (defun ldi-ldi-prog () '(#xE0A0 #xE0B1 #x0FAB #x0FAB #x27AB))
 
-(defun u8-cases (x)
-  (if (zp x)
+(defun u8-cases (n)
+  (if (zp n)
       nil
-    (cons `(equal x ,(- x 1))
-	  (u8-1d-cases (- x 1)))))
-  
+    (cons `(equal x ,(- n 1))
+	  (u8-cases (- n 1)))))
+
 (defmacro u8-xor-0-by-u8-cases ()
   `(defthm u8-xor-0
-    (implies (and (natp x) (< x 256))
+    (implies (u8p x)
 	     (equal (u8-xor x x)
 		    0))
     :hints (("Goal"
@@ -124,13 +134,23 @@
 		    
 (u8-xor-0-by-u8-cases)
 
+(defthm assoc-equal-ignores-other-put-assoc
+  (implies (not (equal a b))
+	   (equal (assoc-equal a (put-assoc-equal b x ds))
+		  (assoc-equal a ds))))
+
+(defthm assoc-equal-sees-own-put-assoc
+  (equal (cdr (assoc-equal k (put-assoc-equal k x d)))
+	 x))
+
 (defthm get-reg-pc-cycle-increment
   (equal (get-reg (pc-cycle-increment cpu) r)
 	 (get-reg cpu r)))
 
 (defthm get-reg-set-reg-join
-  (equal (get-reg (set-reg cpu r x) r)
-	 x))
+  (implies (u8p x)
+	   (equal (get-reg (set-reg cpu r x) r)
+		  x)))
 
 (defthm current-instruction-over-pc-cycle-increment
   (equal (get-pc (pc-cycle-increment pc-cpu))
@@ -165,18 +185,22 @@
 	 (has-prog-mems (rest words) cpu (1+ address)))))
 
 
+;(defmacro u8p (x)
+;  (and (natp x)
+;       (< x 256)))
+
+(defthm get-reg-u8p
+  (u8p (get-reg cpu r))
+  :rule-classes (:type-prescription))
 
 (defthm reloc-mul-8-8-prelude
   (implies (and (has-prog-mems *mul-8-8-prog* cpu (get-pc cpu))
-		;(equal (current-instruction cpu) #x2422)
-		(natp (get-reg cpu 2))
-		(< (get-reg cpu 2) 256)
-		(natp (get-reg cpu 3))
-		(< (get-reg cpu 3) 256)
 		)
-	   (equal (get-reg (cpu-step (cpu-step cpu)) 2)
+	   (equal (get-reg (cpu-n-step 2 cpu) 3)
 		  0))
-  :hints (("Goal" :in-theory (disable get-reg get-prog set-prog get-pc set-reg u8-xor pc-cycle-increment))))
+  :hints (("Goal" 
+	   :in-theory (disable get-reg get-prog u8p set-prog get-pc set-reg u8-xor pc-cycle-increment)
+	   :expand (:free (n c) (cpu-n-step n c)))))
   
 (cpu-n-step 4 (write-prog-words *empty-cpu* (ldi-ldi-prog) 0)))
 
