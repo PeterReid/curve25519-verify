@@ -286,8 +286,10 @@
 	    (equal (get-reg (cpu-n-step 9 cpu) 16)
 		   (u8-neg (u8-and (get-reg cpu 4) 1) )
 		   )
-	    (equal (get-reg (cpu-n-step 8 cpu) 8)
-		   (get-reg cpu 5))
+	    (equal (get-reg (cpu-n-step 9 cpu) 8)
+		   (if (evenp (get-reg cpu 4))
+		       0
+		     (get-reg cpu 5)))
 	    (equal (get-reg (cpu-n-step 9 cpu) 17) 7))
 	    )
   :hints (("Goal" 
