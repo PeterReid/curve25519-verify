@@ -90,6 +90,7 @@ def jump_12bit_encoder(prefix):
 			raise TypeError("Too far to jump")
 		return tobin(offset, 12)
 	return [literal(prefix), encode_12bit_offset] 
+
 def patternify_conversion(conversion):
 	pattern = conversion[0]
 	pattern = pattern.replace('+', '\+')
@@ -107,6 +108,19 @@ def encode_CCCC_CCCd_dddd_CCCC(prefix, suffix):
 def encode_CCCC_CCrd_dddd_rrrr(prefix):
 	return any_source_dest_encoder(prefix)
 
+def aliased_encoder(alias_pattern):
+	def encode(compiler, match):
+		rewritten = alias_pattern
+		groups = match.groupdict()
+		rewritten = rewritten.replace('dest', 'R'+groups.get('dest', ''))
+		rewritten = rewritten.replace('source', 'R'+groups.get('source', ''))
+		rewritten = rewritten.replace('immediate', groups.get('immediate', ''))
+		rewritten = rewritten.replace('label', groups.get('label', ''))
+		rewritten = rewritten.replace('reg', 'R'+groups.get('reg', ''))
+		print("Rewrote to ", rewritten)
+		return instruction_to_word(compiler, rewritten)
+	return [encode]
+
 instruction_conversions = [patternify_conversion(c) for c in [
 	("ADC dest,source", encode_CCCC_CCrd_dddd_rrrr("000111")),
 	("ADD dest,source", encode_CCCC_CCrd_dddd_rrrr("000011")),
@@ -119,6 +133,7 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("LDI reg,immediate", highreg_and_immediate8_encoder("1110")),
 	("LPM reg,Z",  unary_5bit_encoder("1001000", "0100")),
 	("LPM reg,Z+", unary_5bit_encoder("1001000", "0101")),
+	("LSL reg", aliased_encoder("ADD reg,reg")),
 	("LSR reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0110")),
 	("MOV dest,source", any_source_dest_encoder("001001")),
 	("NEG reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0001")),
@@ -128,6 +143,18 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("ST -X,reg", unary_5bit_encoder("1001001", "1110")),
 
 ]]
+
+def instruction_to_word(compiler, line):
+	for (pattern, to) in instruction_conversions:
+		print(pattern)
+		m = re.match(pattern, line)
+		if m:
+			result = ''.join([f(compiler, m) for f in to])
+			if len(result) != 16:
+				raise TypeError("Line did not produce a proper word: " + line)
+			print(line, "matched", pattern, result)
+			return result
+	raise TypeError("Did not understand a line: " + line)
 
 class Compiler:
 	def __init__(self, asm_lines):
@@ -155,22 +182,8 @@ class Compiler:
 		pass # todo
 
 	def process_instruction(self, line):
-		print(":: ", line)
-		for (pattern, to) in instruction_conversions:
-			print(pattern)
-			m = re.match(pattern, line)
-			if m:
-				result = ''.join([f(self, m) for f in to])
-				if len(result) != 16:
-					raise TypeError("Line did not produce a proper word: " + line)
-				print(line, "matched", pattern, result)
-				self.process_word(int(result, 2), line)
-				return
-
-
-		raise TypeError("Did not understand a line: " + line)
-		#for template in templates:
-		#	if template
+		result = instruction_to_word(self, line)
+		self.process_word(int(result, 2), line)
 
 	def process_word(self, word, source_code):
 		if self.program_words[self.write_addr]:
