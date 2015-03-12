@@ -38,9 +38,8 @@ def tobin(x, bit_count):
 	padded = '0'*bit_count + with_0b[2:]
 	return padded[-bit_count:]
 
-def parse_8bit(x):
+def parse_literal(x):
 	val = int(x)
-	if val < 0 or val >= 256: raise("Literal out of range: " + str(x))
 	return val
 
 def literal(s):
@@ -50,7 +49,7 @@ def highreg_and_immediate8_encoder(opcode):
 	def dest_imm_12bit(compiler, match):
 		reg = int(match.group('reg'))
 		if reg < 16: raise TypeError("Must use one of registers 16-31")
-		immediate = parse_8bit(match.group('immediate')) 
+		immediate = parse_literal(match.group('immediate')) 
 		return tobin(immediate>>4, 4) + tobin(reg-16, 4) + tobin(immediate&0xf, 4)
 	return [literal(opcode), dest_imm_12bit]
 
@@ -107,7 +106,29 @@ def encode_CCCC_CCCd_dddd_CCCC(prefix, suffix):
 	return unary_5bit_encoder(prefix, suffix)
 def encode_CCCC_CCrd_dddd_rrrr(prefix):
 	return any_source_dest_encoder(prefix)
+def encode_CCCC_CCCC_KKdd_KKKK(prefix):
+	def encode_doublereg(compiler, match):
+		lower_reg = int(match.group("reg"))
+		upper_reg = match.group("source")
+		immediate = parse_literal(match.group('immediate')) 
+		if immediate<0 or immediate >= 64:
+			raise TypeError("Immediate operand must be between 0 and 63")
+		if upper_reg and int(upper_reg) != lower_reg+1:
+			raise TypeError("Must modify consecutive registers")
+		if lower_reg not in [24,26,28,30]:
+			raise TypeError("Must modify R24, R26, R28, or R30")
+		regindex = (lower_reg - 24)/2
+		return prefix + tobin(immediate>>4,2) + tobin(regindex,2) + tobin(immediate&0xf, 4)
+	return [encode_doublereg]
 
+def encode_CCCC_CCCd_dddd_CCCC_k16(prefix, suffix):
+	def encode(compiler, match):
+		reg = int(match.group("reg"))
+		immediate = parse_literal(match.group('immediate'))
+		if immediate<0 or immediate > 0xffff:
+			raise "Immediate operand out of range"
+		return prefix + tobin(reg,5) + suffix + tobin(immediate, 16)
+	return [encode]
 def aliased_encoder(alias_pattern):
 	def encode(compiler, match):
 		rewritten = alias_pattern
@@ -127,32 +148,62 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("AND dest,source", encode_CCCC_CCrd_dddd_rrrr("001000")),
 	("ANDI reg,immediate", encode_CCCC_KKKK_dddd_KKKK("0111")),
 	("BRNE label", jump_7bit_encoder("111101", "001")),
+	("BRPL label", jump_7bit_encoder("111101", "010")),
+	("CLC", [literal("1001 0100 1000 1000")]),
+	("COM reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0000")),
 	("CP dest,source", any_source_dest_encoder("000101")),
 	("DEC reg", unary_5bit_encoder("1001010", "1010")),
 	("EOR dest,source", any_source_dest_encoder("001001")),
+	("LD reg,X", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1100")),
+	("LD reg,X+", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1101")),
+	("LD reg,-X", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1110")),
+	("LD reg,Y", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1000")),
+	("LD reg,Y+", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1001")),
+	("LD reg,-Y", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1010")),
+	("LD reg,Z", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0000")),
+	("LD reg,Z+", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0001")),
+	("LD reg,-Z", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0010")),
 	("LDI reg,immediate", highreg_and_immediate8_encoder("1110")),
+	("LDS reg,immediate", encode_CCCC_CCCd_dddd_CCCC_k16("1001 000", "0000")),
 	("LPM reg,Z",  unary_5bit_encoder("1001000", "0100")),
 	("LPM reg,Z+", unary_5bit_encoder("1001000", "0101")),
 	("LSL reg", aliased_encoder("ADD reg,reg")),
 	("LSR reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0110")),
 	("MOV dest,source", any_source_dest_encoder("001001")),
 	("NEG reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0001")),
+	("OR dest,source", encode_CCCC_CCrd_dddd_rrrr("001010")),
+	("RET", [literal("1001 0101 0000 1000")]),
+	("ROL reg", aliased_encoder("ADC reg,reg")),
 	("RCALL label", jump_12bit_encoder("1101")),
+	("SBC dest,source", encode_CCCC_CCrd_dddd_rrrr("000010")),
+	("SBIW (source:)?reg,immediate", encode_CCCC_CCCC_KKdd_KKKK("1001 0111")),
+	("SBIW (XH:)?XL,immediate", aliased_encoder("SBIW R27:R26,immediate")),
+	("SBIW (YH:)?YL,immediate", aliased_encoder("SBIW R29:R28,immediate")),
+	("SBIW (ZH:)?ZL,immediate", aliased_encoder("SBIW R31:R30,immediate")),
+	("SBIW X,immediate", aliased_encoder("SBIW R27:R26,immediate")),
+	("SBIW Y,immediate", aliased_encoder("SBIW R29:R28,immediate")),
+	("SBIW Z,immediate", aliased_encoder("SBIW R31:R30,immediate")),
 	("ST X,reg",  unary_5bit_encoder("1001001", "1100")),
 	("ST X+,reg", unary_5bit_encoder("1001001", "1101")),
 	("ST -X,reg", unary_5bit_encoder("1001001", "1110")),
+	("ST X,reg",  unary_5bit_encoder("1001001", "1100")),
+	("ST X+,reg", unary_5bit_encoder("1001001", "1101")),
+	("ST -X,reg", unary_5bit_encoder("1001001", "1110")),
+	("ST Z,reg",  unary_5bit_encoder("1001001", "0000")),
+	("ST Z+,reg", unary_5bit_encoder("1001001", "0001")),
+	("ST -Z,reg", unary_5bit_encoder("1001001", "0010")),
 
 ]]
 
 def instruction_to_word(compiler, line):
 	for (pattern, to) in instruction_conversions:
-		print(pattern)
 		m = re.match(pattern, line)
 		if m:
 			result = ''.join([f(compiler, m) for f in to])
-			if len(result) != 16:
+			result = result.replace(' ', '')
+			if len(result) % 16 != 0:
+				print(result)
 				raise TypeError("Line did not produce a proper word: " + line)
-			print(line, "matched", pattern, result)
 			return result
 	raise TypeError("Did not understand a line: " + line)
 
@@ -183,7 +234,8 @@ class Compiler:
 
 	def process_instruction(self, line):
 		result = instruction_to_word(self, line)
-		self.process_word(int(result, 2), line)
+		for word_start in range(0, len(result), 16):
+			self.process_word(int(result[word_start:word_start+16], 2), line)
 
 	def process_word(self, word, source_code):
 		if self.program_words[self.write_addr]:
