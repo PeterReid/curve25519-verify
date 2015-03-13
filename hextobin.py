@@ -3,6 +3,7 @@ import re
 
 path = sys.argv[1]
 output_path = sys.argv[2]
+output_size = int(sys.argv[3])
 
 byte_at = dict()
 segment_offset = 0
@@ -11,7 +12,6 @@ for line in open(path).readlines():
 	line = line.rstrip('\r\n')
 	if not re.match("^:[0-9a-fA-F]+$", line) or len(line)%2==0:
 		raise TypeError("Malformed line: " + line)
-	print(line)
 	hex_bytes = line[1:]
 	bytes = [int(hex_bytes[i:i+2], 16) for i in range(0, len(hex_bytes), 2)]
 	
@@ -30,7 +30,6 @@ for line in open(path).readlines():
 
 	if record_type == 0:	
 		for (idx, byte) in enumerate(payload):
-			print(idx, byte)	
 			offset_address = segment_offset*16 + address+idx
 			if offset_address in byte_at:
 				raise TypeError("Tried to write into %d twice" % offset_address)
@@ -44,8 +43,10 @@ for line in open(path).readlines():
 	else:
 		raise TypeError("Unknown record type: %d" % record_type)
 
-max_address = max(byte_at.keys())
-binary = [byte_at.get(i, 0) for i in range(max_address)]
+if max(byte_at.keys()) >= output_size:
+	raise TypeError("Binary does not fit in the given output size")
+
+binary = [byte_at.get(i, 0xff) for i in range(output_size)]
 with open(output_path, 'wb') as output:
     output.write(bytearray(binary))
 
