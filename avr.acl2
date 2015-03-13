@@ -46,6 +46,10 @@
     (+ (u8-fix x) (u8-fix y) -256)))
   ;(logand (+ x y) 255))
 
+(defthm u8p-u8+
+  (u8p (u8+ x y))
+  :rule-classes (:type-prescription))
+
 (defun u8+-carry-bit (x y)
   (<= 256 (+ (u8-fix x) (u8-fix y))))
 
@@ -67,18 +71,23 @@
   (u8p (u8-neg x))
   :rule-classes (:type-prescription))
 
+(defconst *status-reg* #x5F)
+(defconst *carry-bit* 0)
+
 ; TODO: Flags
 (defun exec-add (cpu dest-reg src-reg)
   (pc-cycle-increment 
-   ;(set-reg 
+   (set-reg 
     (set-reg cpu 
 	     dest-reg
 	     (u8+ (get-reg cpu dest-reg)
 		  (get-reg cpu src-reg)))
-   ; *status-reg*
-   ; (set-bit (get-reg cpu *status-reg*)
-;	     *carry-bit*
-))	     
+    *status-reg*
+    (u8-set-bit (get-reg cpu *status-reg*)
+		*carry-bit*
+		(u8+-carry-bit (get-reg cpu dest-reg)
+			       (get-reg cpu src-reg)))
+    )))
 
   ;  )))
   
@@ -218,7 +227,9 @@
   (list #x2422 #x2433 #x2466 #xE017 #x2D04 #x7001 #x9501
 	#x2C85 ; MOV R8, R5
 	#x2280 ; AND R8, R16 -- apply the mask
-	   
+	#x0C28
+	#x2C86
+	#x2280
 	   ))
 
 
@@ -275,18 +286,27 @@
   (implies (and (has-prog-mems *mul-8-8-prog* cpu (get-pc cpu))
 		)
 	   (and
-	    (equal (get-reg (cpu-n-step 9 cpu) 16)
-		   (u8-neg (u8-and (get-reg cpu 4) 1) )
-		   )
-	    (equal (get-reg (cpu-n-step 9 cpu) 8)
-		   (if (evenp (get-reg cpu 4))
-		       0
-		     (get-reg cpu 5)))
-	    (equal (get-reg (cpu-n-step 9 cpu) 17) 7))
-	    )
+	;    (equal (get-reg (cpu-n-step 9 cpu) 16)
+	;	   (u8-neg (u8-and (get-reg cpu 4) 1) )
+	;	   )
+	    ;(equal (get-reg (cpu-n-step 10 cpu) 8)
+	;	   (if (evenp (get-reg cpu 4))
+	;	       0
+	;	     (get-reg cpu 5)))
+
+	    (equal (get-reg (cpu-n-step 12 cpu) 2)
+		   (u8+ 
+		    0
+		    (if (evenp (get-reg cpu 4))
+			0
+		      (get-reg cpu 5))))
+
+
+	 ;   (equal (get-reg (cpu-n-step 9 cpu) 17) 7))
+	    ))
   :hints (("Goal" 
 	   :in-theory (disable get-reg get-prog u8p set-prog get-pc 
-			       mod set-reg u8-xor u8-and u8-neg
+			       mod set-reg u8-xor u8+ u8+-carry-bit u8-and u8-neg
 			       pc-cycle-increment)
 	   :expand (:free (n c) (cpu-n-step n c)))))
 
