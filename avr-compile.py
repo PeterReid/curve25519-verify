@@ -39,7 +39,8 @@ def tobin(x, bit_count):
 	return padded[-bit_count:]
 
 def parse_literal(x):
-	val = int(x)
+	hex = x.find('X')>=0
+	val = int(x, 16 if hex else 10)
 	return val
 
 def literal(s):
@@ -169,7 +170,7 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("LPM reg,Z+", unary_5bit_encoder("1001000", "0101")),
 	("LSL reg", aliased_encoder("ADD reg,reg")),
 	("LSR reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0110")),
-	("MOV dest,source", any_source_dest_encoder("001001")),
+	("MOV dest,source", any_source_dest_encoder("001011")),
 	("NEG reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0001")),
 	("OR dest,source", encode_CCCC_CCrd_dddd_rrrr("001010")),
 	("RET", [literal("1001 0101 0000 1000")]),
@@ -230,7 +231,30 @@ class Compiler:
 			self.process_instruction(line)
 
 	def process_command(self, line):
-		pass # todo
+		print(line)
+		command_and_args = line.split(' ')
+		if len(command_and_args) != 2: raise TypeError("Invalid compiler command")
+		command, args = command_and_args
+		if command == '.ORG':
+			return self.process_org_command(args)
+		elif command == '.DB':
+			return self.process_db_command(args)
+		else:
+			raise TypeError("Unrecognized compiler command")
+
+	def process_org_command(self, args):
+		self.write_addr = parse_literal(args)
+				
+	def process_db_command(self, args):
+		bytes = [parse_literal(arg) for arg in args.split(',')]
+		for byte in bytes:
+			if byte<0 or byte>=256:
+				raise TypeError("Byte literal out of range")
+		for idx in range(0, len(bytes), 2):
+			low_byte = bytes[idx]
+			high_byte = bytes[idx+1] if idx+1 < len(bytes) else 0
+			self.process_word(low_byte | (high_byte<<8), "(byte literals)")
+			
 
 	def process_instruction(self, line):
 		result = instruction_to_word(self, line)
@@ -246,6 +270,16 @@ class Compiler:
 		self.program_words[self.write_addr] = (word, source_code)
 		self.write_addr += 1
 
+	def output_bin(self, path):
+		def word_to_bytes(word):
+			if word == None: return [0xff, 0xff]
+			return [word[0]&0xff, (word[0]>>8)&0xff]
+		
+		bytes = sum( [word_to_bytes(word) for word in self.program_words], [])
+		with open(path, "wb") as output:
+			output.write(bytearray(bytes))
+			
 compiler = Compiler(lines)
 compiler.run()
+compiler.output_bin("out-compiled.bin")
 
