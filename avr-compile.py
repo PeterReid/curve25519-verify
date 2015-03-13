@@ -34,7 +34,7 @@ label_pat = "(?P<label>[A-Z0-9_]+)"
 
 # x as a binary string, bit_count characters long
 def tobin(x, bit_count):
-	with_0b = bin(x)
+	with_0b = bin(x + 0x10000)
 	padded = '0'*bit_count + with_0b[2:]
 	return padded[-bit_count:]
 
@@ -76,7 +76,7 @@ def unary_5bit_encoder(prefix, suffix):
 def jump_7bit_encoder(prefix, suffix):
 	def encode_7bit_offset(compiler, match):
 		label = match.group('label')
-		offset = 0 # TODO: Actually put the offset in here
+		offset = compiler.jump_offset_for(label)
 		if offset < -64 or offset >= 64:
 			raise TypeError("Too far to jump")
 		return tobin(offset, 7)
@@ -85,7 +85,7 @@ def jump_7bit_encoder(prefix, suffix):
 def jump_12bit_encoder(prefix):
 	def encode_12bit_offset(compiler, match):
 		label = match.group('label')
-		offset = 0 # TODO: Actually put the offset in here
+		offset = compiler.jump_offset_for(label)
 		if offset < -2048 or offset >= 2048:
 			raise TypeError("Too far to jump")
 		return tobin(offset, 12)
@@ -162,7 +162,7 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("LD reg,Y", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1000")),
 	("LD reg,Y+", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1001")),
 	("LD reg,-Y", encode_CCCC_CCCd_dddd_CCCC("1001 000", "1010")),
-	("LD reg,Z", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0000")),
+	("LD reg,Z", encode_CCCC_CCCd_dddd_CCCC("1000 000", "0000")),
 	("LD reg,Z+", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0001")),
 	("LD reg,-Z", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0010")),
 	("LDI reg,immediate", highreg_and_immediate8_encoder("1110")),
@@ -188,10 +188,10 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("ST X,reg",  unary_5bit_encoder("1001001", "1100")),
 	("ST X+,reg", unary_5bit_encoder("1001001", "1101")),
 	("ST -X,reg", unary_5bit_encoder("1001001", "1110")),
-	("ST X,reg",  unary_5bit_encoder("1001001", "1100")),
-	("ST X+,reg", unary_5bit_encoder("1001001", "1101")),
-	("ST -X,reg", unary_5bit_encoder("1001001", "1110")),
-	("ST Z,reg",  unary_5bit_encoder("1001001", "0000")),
+	("ST Y,reg",  unary_5bit_encoder("1000001", "1000")),
+	("ST Y+,reg", unary_5bit_encoder("1001001", "1001")),
+	("ST -Y,reg", unary_5bit_encoder("1001001", "1010")),
+	("ST Z,reg",  unary_5bit_encoder("1000001", "0000")),
 	("ST Z+,reg", unary_5bit_encoder("1001001", "0001")),
 	("ST -Z,reg", unary_5bit_encoder("1001001", "0010")),
 
@@ -214,6 +214,8 @@ class Compiler:
 		self.asm_lines = asm_lines	
 		self.write_addr = 0
 		self.program_words = [None]*4096
+		self.pass_addr_for_label = dict()
+		self.addr_for_label = None 
 
 	def run(self):
 		prog_word = dict()
@@ -225,9 +227,12 @@ class Compiler:
 		if len(line)==0: return
 		if line[0] == '.':
 			return self.process_command(line)
+		print(line)
 		label, instruction = parse_label(line)
 		if label:
-			self.addr_for_label = self.write_addr
+			if label in self.pass_addr_for_label:
+				raise TypeError("Label redefined: " + label)
+			self.pass_addr_for_label[label] = self.write_addr
 		if instruction:
 			self.process_instruction(line)
 
@@ -271,6 +276,15 @@ class Compiler:
 		self.program_words[self.write_addr] = (word, source_code)
 		self.write_addr += 1
 
+	def jump_offset_for(self, label):
+		if self.addr_for_label:
+			if label not in self.addr_for_label:
+				raise TypeError("Unknown label: " + label)
+			print("Resolving %s to %d", (label, self.addr_for_label[label]))
+			return self.addr_for_label[label] - self.write_addr - 1
+		else:
+			return 0
+
 	def output_bin(self, path):
 		def word_to_bytes(word):
 			if word == None: return [0xff, 0xff]
@@ -279,8 +293,24 @@ class Compiler:
 		bytes = sum( [word_to_bytes(word) for word in self.program_words], [])
 		with open(path, "wb") as output:
 			output.write(bytearray(bytes))
+
+	def output_lisp(self, path):
+		
+		with open(path, "w") as out:
+			out.write("defconst *prog-mem*\n");
+			for word in self.program_words:
+				if word == None:
+					out.write("  nil\n");
+				else:
+					out.write("  #x%04x ; %s\n" % (word[0], word[1]))
+			out.write(")\n");
 			
 compiler = Compiler(lines)
 compiler.run()
+compiler.addr_for_label = compiler.pass_addr_for_label
+compiler.pass_addr_for_label = dict()
+compiler.program_words = [None]*4096
+compiler.run()
 compiler.output_bin("out-compiled.bin")
+compiler.output_lisp("out-compiled.lisp")
 
