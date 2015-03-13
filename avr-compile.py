@@ -99,6 +99,7 @@ def patternify_conversion(conversion):
 	pattern = pattern.replace('reg', reg_pat)
 	pattern = pattern.replace('immediate', immediate_pat)
 	pattern = pattern.replace('label', label_pat)
+	pattern = "^" + pattern + "$"
 	return (pattern, conversion[1])
 
 def encode_CCCC_KKKK_dddd_KKKK(prefix):
@@ -167,7 +168,7 @@ instruction_conversions = [patternify_conversion(c) for c in [
 	("LDI reg,immediate", highreg_and_immediate8_encoder("1110")),
 	("LDS reg,immediate", encode_CCCC_CCCd_dddd_CCCC_k16("1001 000", "0000")),
 	("LPM reg,Z",  unary_5bit_encoder("1001000", "0100")),
-	("LPM reg,Z+", unary_5bit_encoder("1001000", "0101")),
+	("LPM reg,Z+", encode_CCCC_CCCd_dddd_CCCC("1001 000", "0101")),
 	("LSL reg", aliased_encoder("ADD reg,reg")),
 	("LSR reg", encode_CCCC_CCCd_dddd_CCCC("1001010", "0110")),
 	("MOV dest,source", any_source_dest_encoder("001011")),
