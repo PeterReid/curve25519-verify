@@ -297,13 +297,13 @@ class Compiler:
 	def output_lisp(self, path):
 		
 		with open(path, "w") as out:
-			out.write("defconst *prog-mem*\n");
+			out.write("(defconst *prog-mem* (list\n");
 			for word in self.program_words:
 				if word == None:
 					out.write("  nil\n");
 				else:
 					out.write("  #x%04x ; %s\n" % (word[0], word[1]))
-			out.write(")\n");
+			out.write("))\n");
 			
 compiler = Compiler(lines)
 compiler.run()

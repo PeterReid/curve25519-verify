@@ -2,6 +2,14 @@
 
 (defconst *empty-cpu* '((:cycle . 0) (:pc . 0)))
 
+(defun cpu-ops-fn (cpu ops)
+  (if (endp ops)
+      cpu
+    (cpu-ops-fn (subst cpu '_ (first ops)) (rest ops))))
+
+(defmacro cpu-ops (&rest ops)
+  (cpu-ops-fn 'cpu ops))
+
 (defun data-key (index)
   (cons :data index))
 
@@ -33,9 +41,18 @@
 (defun advance-cycle (cpu amt)
   (put-assoc-equal :cycle (+ amt (get-cycle cpu)) cpu))
 
+(defun set-pc (cpu pc)
+  (put-assoc-equal :pc pc cpu))
+
+
+(defun pc-multicycle (cpu cycle-count)
+  (let ((initial-pc (get-pc cpu)))
+    (cpu-ops
+     (advance-cycle _ cycle-count)
+     (set-pc _ (+ 1 initial-pc)))))
+
 (defun pc-cycle-increment (cpu)
-  (put-assoc-equal :pc (1+ (get-pc cpu))
-	(advance-cycle cpu 1)))
+  (pc-multicycle cpu 1))
 
 (defun exec-ldi (cpu dest-reg immediate)
   (pc-cycle-increment (set-reg cpu dest-reg immediate)))
@@ -73,6 +90,8 @@
 
 (defconst *status-reg* #x5F)
 (defconst *carry-bit* 0)
+
+
 
 ; TODO: Flags
 (defun exec-add (cpu dest-reg src-reg)
@@ -113,7 +132,35 @@
 			       dest-reg 
 			       (u8-and (get-reg cpu dest-reg)
 				       (get-reg cpu src-reg)))))
+(defun exec-clc (cpu)
+  (pc-cycle-increment (set-reg cpu *status-reg*
+			       (u8-set-bit (get-reg cpu *status-reg*)
+					   *carry-bit*
+					   0))))
 
+
+(defun get-doublereg (cpu reg)
+  (+ (get-reg cpu reg)
+     (* 256 (get-reg cpu (1+ reg)))))
+
+(defun set-doublereg (cpu reg value)
+  (cpu-ops
+   (set-reg _ reg (mod value 256))
+   (set-reg _ (1+ reg) (mod (floor value 256) 256))))
+
+(defun exec-ld (cpu dest-reg address-reg increment)
+  (if (and (not (zip increment))
+	   (or (equal dest-reg address-reg)
+	       (equal dest-reg (1+ address-reg))))
+      :undefined-ld
+    (let* ((current-address (get-doublereg cpu address-reg))
+	   (updated-address (+ increment current-address))
+	   (loaded-value (get-reg cpu current-address)))
+      (cpu-ops cpu
+       (set-reg _ dest-reg loaded-value)
+       (set-doublereg _ address-reg updated-address)
+       (pc-multicycle _ 2)))))
+	   
 (defun current-instruction (cpu)
   (get-prog cpu (get-pc cpu)))
 
@@ -155,8 +202,14 @@
 	  ((equal (opcode-6 instruction) #x2000)
 	   (exec-and cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
 	  ((equal (opcode-11 instruction) #x9401)
-	   (exec-neg cpu (decode-dest-reg instruction))
-	  ))))
+	   (exec-neg cpu (decode-dest-reg instruction)))
+	  ((equal instruction #x9488)
+	   (exec-clc cpu))
+	  ((equal (opcode-11 instruction) #x900d) ; LD _, X+
+	   (exec-ld cpu (decode-dest-reg instruction) 26 1))
+	  ((equal (opcode-11 instruction) #x9009) ; LD _, Y+
+	   (exec-ld cpu (decode-dest-reg instruction) 28 1))
+	  )))
 
 
 (defun cpu-n-step (n cpu)
@@ -172,12 +225,7 @@
 	      (first words))))
 
 (defun ldi-ldi-prog () '(#xE0A0 #xE0B1 #x0FAB #x0FAB #x27AB))
-
-;(defthm-by-u8-cases u8-and-1-is-mod
-;  (implies (u8p x)
-;	   (equal (u8-and x 1)
-;		  (mod x 2))))
-	    
+  
 (defthm-by-u8-cases u8-xor-0
   (implies (u8p x)
 	   (equal (u8-xor x x)
@@ -196,6 +244,10 @@
   (equal (get-reg (pc-cycle-increment cpu) r)
 	 (get-reg cpu r)))
 
+(defthm get-pc-of-multicycle
+  (equal (get-pc (pc-multicycle cpu n))
+	 (+ 1 (get-pc cpu)))))
+
 (defthm get-reg-set-reg-join
   (implies (u8p x)
 	   (equal (get-reg (set-reg cpu r x) r)
@@ -210,12 +262,24 @@
   (equal (get-prog (pc-cycle-increment c) r)
 	 (get-prog c r)))
 
+(defthm get-prog-over-pc-multicycle
+  (equal (get-prog (pc-multicycle cpu n) a)
+	 (get-prog cpu a)))
+
 (defthm get-pc-ignores-set-reg
   (equal (get-pc (set-reg cpu r x))
 	 (get-pc cpu)))
 
+(defthm get-pc-ignores-set-doublereg
+  (equal (get-pc (set-doublereg cpu r x))
+	 (get-pc cpu)))
+
 (defthm get-prog-ignores-set-reg
   (equal (get-prog (set-reg cpu r x) idx)
+	 (get-prog cpu idx)))
+
+(defthm get-prog-ignores-set-doublereg
+  (equal (get-prog (set-doublereg cpu r x) idx)
 	 (get-prog cpu idx)))
 
 (defthm get-reg-ignores-different-set-reg
@@ -310,6 +374,41 @@
 			       pc-cycle-increment)
 	   :expand (:free (n c) (cpu-n-step n c)))))
 
-(cpu-n-step 4 (write-prog-words *empty-cpu* (ldi-ldi-prog) 0)))
+(defconst *add-32* (list
+  #xe10f ; LDI R16,31
+  #x9488 ; CLC
+  #x902d ; LD R2,X+
+  #x9039 ; LD R3,Y+
+  #x1c23 ; ADC R2,R3
+  #x9221 ; ST Z+,R2
+  #x950a ; DEC R16
+  #xf7d2 ; BRPL ADD_32_TO_32_TOP
+  #x9790 ; SBIW R26,32
+  #x97a0 ; SBIW R28,32
+  #x97b0 ; SBIW R30,32
+  #x9508 ; RET
+  ))
 
-(include-book "foo" :dir :system)
+(defun read-le-bytes (n cpu addr)
+  (if (zp n)
+      0
+    (+ (get-reg cpu addr)
+       (* 256 (read-le-bytes (- n 1) cpu (+ addr 1))))))
+
+(defthm add-32-pc-progress
+  (implies (and (has-prog-mems *add-32* cpu (get-pc cpu))
+		(integerp (get-pc cpu))
+		)
+	   (equal 
+	    
+	    (get-pc (cpu-n-step 4 cpu))
+	    (+ 4 (get-pc cpu))))
+
+  :hints (("Goal" 
+	   :in-theory (disable get-reg get-prog u8p set-prog get-pc 
+			       mod set-reg u8-xor u8+ u8+-carry-bit 
+			       u8-and u8-neg u8-set-bit
+			       set-doublereg get-doublereg
+			       pc-multicycle
+			       pc-cycle-increment)
+	   :expand (:free (n c) (cpu-n-step n c)))))
