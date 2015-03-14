@@ -57,36 +57,6 @@
 (defun exec-ldi (cpu dest-reg immediate)
   (pc-cycle-increment (set-reg cpu dest-reg immediate)))
 
-(defun u8+ (x y)
-  (if (< (+ (u8-fix x) (u8-fix y)) 256)
-      (+ (u8-fix x) (u8-fix y))
-    (+ (u8-fix x) (u8-fix y) -256)))
-  ;(logand (+ x y) 255))
-
-(defthm u8p-u8+
-  (u8p (u8+ x y))
-  :rule-classes (:type-prescription))
-
-(defun u8+-carry-bit (x y)
-  (<= 256 (+ (u8-fix x) (u8-fix y))))
-
-(defun u8-xor (x y)
-  (logxor x y))
-
-(defun u8-and (x y)
-  (u8-fix (logand x y)))
-
-(defthm u8p-u8-and
-  (u8p (u8-and x y))
-  :rule-classes (:type-prescription))
-
-
-(defun u8-neg (x)
-  (u8-fix (logand (- x) #xFF)))
-
-(defthm u8p-u8-neg
-  (u8p (u8-neg x))
-  :rule-classes (:type-prescription))
 
 (defconst *status-reg* #x5F)
 (defconst *carry-bit* 0)
@@ -108,9 +78,22 @@
 			       (get-reg cpu src-reg)))
     )))
 
-  ;  )))
-  
 
+(defun get-carry-bit (cpu)
+  (u8-get-bit (get-reg cpu *status-reg*)*carry-bit*))
+
+(defun exec-adc (cpu dest-reg src-reg)
+  (let* ((a (get-reg cpu dest-reg))
+	 (b (get-reg cpu src-reg))
+	 (c-in (get-carry-bit cpu))
+	 (initial-status (get-reg cpu *status-reg*)))
+    (cpu-ops
+     (set-reg _ dest-reg (u8-carried-+ a b c-in))
+     (set-reg _ *status-reg* 
+	      (u8-set-bit initial-status *carry-bit* (u8-carried-+-carry-bit a b c-in)))
+     (pc-cycle-increment _)
+     )))
+  
 ; TODO: Flags
 (defun exec-eor (cpu dest-reg src-reg)
   (pc-cycle-increment (set-reg cpu
@@ -193,6 +176,8 @@
 	   (exec-ldi cpu (decode-high-dest-reg instruction) (decode-immediate-16 instruction)))
 	  ((equal (opcode-6 instruction) #x0C00)
 	   (exec-add cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
+	  ((equal (opcode-6 instruction) #x1C00)
+	   (exec-adc cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
 	  ((equal (opcode-6 instruction) #x2400)
 	   (exec-eor cpu (decode-dest-reg instruction) (decode-src-reg instruction)))
 	  ((equal (opcode-6 instruction) #x2C00)
@@ -323,20 +308,7 @@
 		)
 	   (equal (u8-neg (u8-and x 1))
 		  (if (evenp x) 0 255))))
-(defthm-by-u8-cases u8-and-0
-  (equal (u8-and x 0)
-	 0))
-(defthm-by-u8-cases 0-and-u8
-  (equal (u8-and 0 x)
-	 0))
-(defthm-by-u8-cases u8-and-ff
-  (implies (u8p x)
-	   (equal (u8-and x #xFF)
-		  x)))
-(defthm-by-u8-cases ff-and-u8
-  (implies (u8p x)
-	   (equal (u8-and #xFF x)
-		  x)))
+
 
 ; TODO: This may not be necessary
 (defthm hmm2
@@ -401,8 +373,8 @@
 		)
 	   (equal 
 	    
-	    (get-pc (cpu-n-step 4 cpu))
-	    (+ 4 (get-pc cpu))))
+	    (get-pc (cpu-n-step 5 cpu))
+	    (+ 5 (get-pc cpu))))
 
   :hints (("Goal" 
 	   :in-theory (disable get-reg get-prog u8p set-prog get-pc 

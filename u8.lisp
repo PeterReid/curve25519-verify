@@ -102,3 +102,57 @@
 
 (in-theory (disable u8-get-bit))
 (in-theory (disable u8-set-bit))
+
+
+(defun u8+ (x y)
+  (if (< (+ (u8-fix x) (u8-fix y)) 256)
+      (+ (u8-fix x) (u8-fix y))
+    (+ (u8-fix x) (u8-fix y) -256)))
+  ;(logand (+ x y) 255))
+
+(defthm u8p-u8+
+  (u8p (u8+ x y))
+  :rule-classes (:type-prescription))
+
+(defun u8+-carry-bit (x y)
+  (<= 256 (+ (u8-fix x) (u8-fix y))))
+
+(defun u8-carried-+ (a b carry)
+  (mod (+ (u8-fix a) (u8-fix b) (if carry 1 0)) 256))
+
+(defun u8-carried-+-carry-bit (a b carry)
+  (< 255 (+ (u8-fix a) (u8-fix b) (if carry 1 0))))
+
+(defun u8-xor (x y)
+  (logxor x y))
+
+(defun u8-and (x y)
+  (u8-fix (logand x y)))
+
+(defthm u8p-u8-and
+  (u8p (u8-and x y))
+  :rule-classes (:type-prescription))
+
+
+(defun u8-neg (x)
+  (u8-fix (logand (- x) #xFF)))
+
+(defthm u8p-u8-neg
+  (u8p (u8-neg x))
+  :rule-classes (:type-prescription))
+
+
+(defthm-by-u8-cases u8-and-0
+  (equal (u8-and x 0)
+	 0))
+(defthm-by-u8-cases 0-and-u8
+  (equal (u8-and 0 x)
+	 0))
+(defthm-by-u8-cases u8-and-ff
+  (implies (u8p x)
+	   (equal (u8-and x #xFF)
+		  x)))
+(defthm-by-u8-cases ff-and-u8
+  (implies (u8p x)
+	   (equal (u8-and #xFF x)
+		  x)))
