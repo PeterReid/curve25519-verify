@@ -59,7 +59,10 @@
 
 
 (defun u8-set-bit (byte bit-index on)
-  (u8-from-bits (update-nth bit-index on (u8-to-bits byte))))
+  (if (and (natp bit-index)
+	   (< bit-index 8))
+      (u8-from-bits (update-nth bit-index on (u8-to-bits byte)))
+    (u8-fix byte)))
 
 (defun u8-get-bit (byte bit-index)
   (nth bit-index (u8-to-bits byte)))
@@ -84,6 +87,48 @@
 		(booleanp b))
 	   (boolean-listp (update-nth idx b bs))))
 
+
+;(defthm herm
+;  (implies (natp y)
+;	   (equal (expt 2 (+ 1 y))
+;		  (* 2 (expt 2 y)))))
+
+(defthm u8-from-bits-bound-helper
+  (implies (and (natp x)
+		(natp y)
+		(< x y))
+	   (< (+ 1 (* 2 x))
+	      (* 2 y)))
+  :rule-classes nil)
+
+(defthm u8-from-bits-bound
+  (implies (true-listp xs)
+	   (< (u8-from-bits xs)
+	      (expt 2 (len xs))))
+  :hints (("Subgoal *1/3"
+	   :use (:instance u8-from-bits-bound-helper
+			   (x (u8-from-bits (cdr xs)))
+			   (y (expt 2 (len (cdr xs))))))))
+		
+(defthm u8-from-8-bits-u8p
+  (implies (and (true-listp xs)
+		(equal (len xs) 8))
+	   (u8p (u8-from-bits xs)))
+  :hints (("Goal" :use (:instance u8-from-bits-bound
+				 (xs xs))))
+  :rule-classes (:type-prescription))
+
+
+
+(defthm u8-set-bit-u8p
+  ;(implies (and (natp b)
+;		(< b 8))
+	   (u8p (u8-set-bit byte b x));)
+  :hints (("Goal" :in-theory (disable u8-from-bits u8p)
+	   :use (:instance u8-from-8-bits-u8p
+			   (xs (update-nth b x (u8-to-n-bits 8 byte))))))
+  :rule-classes (:type-prescription))
+
 (defthm collapse-u8-get-set
   (implies (and (natp bit-index)
 		(< bit-index 8)
@@ -96,6 +141,7 @@
   (implies (and (natp a) (< a 8)
 		(natp b) (< b 8)
 		(not (equal a b))
+		
 		(booleanp x))
 	   (equal (u8-get-bit (u8-set-bit byte b x) a)
 		  (u8-get-bit byte a))))

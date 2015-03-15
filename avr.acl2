@@ -60,6 +60,13 @@
 
 (defconst *status-reg* #x5F)
 (defconst *carry-bit* 0)
+(defconst *zero-flag* 1)
+(defconst *negative-flag* 2)
+(defconst *overflow-flag* 3)
+(defconst *sign-flag* 4)
+(defconst *half-carry-flag* 5)
+(defconst *transfer-flag* 6)
+(defconst *interrupt-flag* 7)
 
 
 
@@ -119,7 +126,7 @@
   (pc-cycle-increment (set-reg cpu *status-reg*
 			       (u8-set-bit (get-reg cpu *status-reg*)
 					   *carry-bit*
-					   0))))
+					   nil))))
 
 
 (defun get-doublereg (cpu reg)
@@ -139,11 +146,52 @@
     (let* ((current-address (get-doublereg cpu address-reg))
 	   (updated-address (+ increment current-address))
 	   (loaded-value (get-reg cpu current-address)))
-      (cpu-ops cpu
+      (cpu-ops
        (set-reg _ dest-reg loaded-value)
        (set-doublereg _ address-reg updated-address)
        (pc-multicycle _ 2)))))
 	   
+(defun exec-st (cpu source-reg address-reg increment)
+  (if (and (not (zip increment))
+	   (or (equal source-reg address-reg)
+	       (equal source-reg (1+ address-reg))))
+      :undefined-st
+    (let* ((current-address (get-doublereg cpu address-reg))
+	   (updated-address (+ increment current-address))
+	   (value-to-store (get-reg cpu source-reg)))
+      (cpu-ops
+       (set-reg _ current-address value-to-store)
+       (set-doublereg _ address-reg updated-address)
+       (pc-multicycle _ 2)))))
+
+(defun u8-dec (x) (mod (- (u8-fix x) 1) 255))
+(defun u8-dec-overflow-flag (x) (equal x #x80))
+(defun u8-dec-negative-flag (x) (<= 128 (u8-dec x)))
+(defun u8-dec-sign-flag (x) (not (equal (u8-dec-overflow-flag x) (u8-dec-negative-flag x))))
+(defun u8-dec-zero-flag (x) (equal (u8-dec x) 0))
+
+(defun set-bits-fn (args initial)
+  (if (endp args)
+      initial
+    (set-bits-fn (rest (rest args))
+		 `(u8-set-bit ,initial ,(first args) ,(second args)))))
+(defmacro set-bits (initial &rest args)
+  (set-bits-fn args initial))
+
+(defun exec-dec (cpu reg)
+  (let* ((current-value (get-reg cpu reg))
+	 (current-status (get-reg cpu *status-reg*)))
+    (cpu-ops
+     (set-reg _ reg (u8-dec current-value))
+     (set-reg _ *status-reg*
+	      (set-bits current-status
+			*sign-flag* (u8-dec-sign-flag current-value)
+			*overflow-flag* (u8-dec-overflow-flag current-value)
+			*negative-flag* (u8-dec-negative-flag current-value)
+			*zero-flag* (u8-dec-zero-flag current-value)))
+     (pc-cycle-increment _))))
+	      
+
 (defun current-instruction (cpu)
   (get-prog cpu (get-pc cpu)))
 
@@ -194,6 +242,10 @@
 	   (exec-ld cpu (decode-dest-reg instruction) 26 1))
 	  ((equal (opcode-11 instruction) #x9009) ; LD _, Y+
 	   (exec-ld cpu (decode-dest-reg instruction) 28 1))
+	  ((equal (opcode-11 instruction) #x9201) ; ST Z+, _
+	   (exec-st cpu (decode-dest-reg instruction) 30 1))
+	  ((equal (opcode-11 instruction) #x940a) ; DEC
+	   (exec-dec cpu (decode-dest-reg instruction)))
 	  )))
 
 
@@ -229,6 +281,10 @@
   (equal (get-reg (pc-cycle-increment cpu) r)
 	 (get-reg cpu r)))
 
+(defthm get-reg-ignores-pc-multicycle
+  (equal (get-reg (pc-multicycle cpu n) r)
+	 (get-reg cpu r)))
+
 (defthm get-pc-of-multicycle
   (equal (get-pc (pc-multicycle cpu n))
 	 (+ 1 (get-pc cpu)))))
@@ -237,6 +293,16 @@
   (implies (u8p x)
 	   (equal (get-reg (set-reg cpu r x) r)
 		  x)))
+
+(defthm get-doublereg-ignores-pc-cycle-increment
+  (equal (get-doublereg (pc-cycle-increment cpu) r)
+	 (get-doublereg cpu r))
+  :hints (("Goal" :in-theory (disable get-reg pc-multicycle))))
+
+(defthm get-doublereg-ignores-pc-multicycle
+  (equal (get-doublereg (pc-multicycle cpu n) r)
+	 (get-doublereg cpu r))
+  :hints (("Goal" :in-theory (disable get-reg pc-multicycle))))
 
 (defthm current-instruction-over-pc-cycle-increment
   (equal (get-pc (pc-cycle-increment pc-cpu))
@@ -271,6 +337,31 @@
   (implies (not (equal a b))
 	   (equal (get-reg (set-reg cpu a x) b)
 		  (get-reg cpu b))))
+
+(defthm reg-reg-ignores-different-set-doublereg
+  (implies (and (not (equal a b))
+		(not (equal (+ 1 a) b)))
+	   (equal (get-reg (set-doublereg cpu a x) b)
+		  (get-reg cpu b)))
+  :hints (("Goal" :in-theory (disable get-reg set-reg))))
+
+
+(defthm get-doublereg-ignores-different-set-reg
+  (implies (and (not (equal a b))
+		(not (equal a (1+ b))))
+	   (equal (get-doublereg (set-reg cpu a x) b)
+		  (get-doublereg cpu b))))
+(defthm get-doublereg-ignores-different-set-doublereg
+  (implies (and (natp a)
+		(natp b)
+		(not (equal a b))
+		(not (equal a (1+ b)))
+		(not (equal (1+ a) b)))
+	   (equal (get-doublereg (set-doublereg cpu a x) b)
+		  (get-doublereg cpu b)))
+  :hints (("Goal" :in-theory (disable set-reg get-reg))))
+		     
+		    
 
 (defconst *mul-8-8-prog* 
   (list #x2422 #x2433 #x2466 #xE017 #x2D04 #x7001 #x9501
@@ -367,19 +458,59 @@
     (+ (get-reg cpu addr)
        (* 256 (read-le-bytes (- n 1) cpu (+ addr 1))))))
 
-(defthm add-32-pc-progress
+;(defthm u8-set-bit-u8p
+;  (u8p (u8-set-bit byte bit val))
+ ; :rule-classes (:type-prescription))
+(defthm u8-carried-+-u8p
+  (u8p (u8-carried-+ a b c))
+  :rule-classes (:type-prescription))
+
+
+(defthm u8-setp-bit-u8p
+  ;(implies (and (natp b)
+;		(< b 8))
+	   (u8p (u8-set-bit byte b x)))
+  :hints (("Goal" :in-theory (disable u8-from-bits u8p)
+	   :use (:instance u8-from-8-bits-u8p
+			   (xs (update-nth b x (u8-to-n-bits 8 byte))))))
+  :rule-classes (:type-prescription))
+
+
+
+(DEFTHM add-32-pc-progress
   (implies (and (has-prog-mems *add-32* cpu (get-pc cpu))
-		(integerp (get-pc cpu))
+		(<= 96 (get-doublereg cpu 26))
+		(<= 96 (get-doublereg cpu 28))
 		)
 	   (equal 
-	    
-	    (get-pc (cpu-n-step 5 cpu))
-	    (+ 5 (get-pc cpu))))
+	    ;(get-reg (cpu-n-step 5 cpu) 16)
+	    ;31
+
+	    ;(get-reg (cpu-n-step 4 cpu)
+	;	     2)
+	    ;42
+
+	    (get-reg (cpu-n-step 5 cpu) 2)
+	    (u8-carried-+
+	     (get-reg cpu (get-doublereg cpu 26))
+	     (get-reg cpu (get-doublereg cpu 28))
+	     nil)
+		     
+
+	    ;(get-pc (cpu-n-step 7 cpu))
+	    ;(+ 7 (get-pc cpu))
+
+	    ))
 
   :hints (("Goal" 
 	   :in-theory (disable get-reg get-prog u8p set-prog get-pc 
 			       mod set-reg u8-xor u8+ u8+-carry-bit 
 			       u8-and u8-neg u8-set-bit
+			       u8-dec
+			       u8-carried-+
+			       u8-carried-+-carry-bit
+			       u8-dec-sign-flag u8-dec-negative-flag
+			       u8-dec-overflow-flag u8-dec-zero-flag
 			       set-doublereg get-doublereg
 			       pc-multicycle
 			       pc-cycle-increment)
