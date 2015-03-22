@@ -191,6 +191,14 @@
 			*zero-flag* (u8-dec-zero-flag current-value)))
      (pc-cycle-increment _))))
 	      
+(defun exec-brpl (cpu offset)
+  (let* ((current-pc (get-pc cpu))
+	 (current-status (get-reg cpu *status-reg*))
+	 (negative-bit (u8-get-bit current-status *negative-flag*)))
+    (cpu-ops
+     (set-pc _ (+ current-pc
+		  (if negative-bit 1 (+ 1 offset))))
+     (advance-cycle _ (if negative-bit 1 2)))))
 
 (defun current-instruction (cpu)
   (get-prog cpu (get-pc cpu)))
@@ -217,6 +225,15 @@
 (defun decode-src-reg (instruction)
   (logior (logand instruction #x000F)
 	  (ash (logand instruction #x0200) -5)))
+
+(defun branch-opcode (instruction)
+  (logand instruction #xFC07))
+
+(defun decode-branch-offset (instruction)
+  (+ (ash (logand instruction #x01F8) -3)
+     (if (equal (logand instruction #x0100) 0)
+	 0
+       -64)))
 
 (defun cpu-step (cpu)
   (let ((instruction (current-instruction cpu)))
@@ -246,6 +263,8 @@
 	   (exec-st cpu (decode-dest-reg instruction) 30 1))
 	  ((equal (opcode-11 instruction) #x940a) ; DEC
 	   (exec-dec cpu (decode-dest-reg instruction)))
+	  ((equal (branch-opcode instruction) #xF402) ; BRPL
+	   (exec-brpl cpu (decode-branch-offset instruction)))
 	  )))
 
 
@@ -288,6 +307,14 @@
 (defthm get-pc-of-multicycle
   (equal (get-pc (pc-multicycle cpu n))
 	 (+ 1 (get-pc cpu)))))
+
+(defthm get-reg-of-advance-cycle
+  (equal (get-reg (advance-cycle cpu n) r)
+	 (get-reg cpu r)))
+
+(defthm get-reg-of-set-pc
+  (equal (get-reg (set-pc cpu new-pc) r)
+	 (get-reg cpu r)))
 
 (defthm get-reg-set-reg-join
   (implies (u8p x)
@@ -361,7 +388,13 @@
 		  (get-doublereg cpu b)))
   :hints (("Goal" :in-theory (disable set-reg get-reg))))
 		     
-		    
+(defthm get-pc-ignores-advance-cycle
+  (equal (get-pc (advance-cycle cpu n))
+	 (get-pc cpu)))
+
+(defthm get-pc-set-pc-collapse
+  (equal (get-pc (set-pc cpu c))
+	 c))
 
 (defconst *mul-8-8-prog* 
   (list #x2422 #x2433 #x2466 #xE017 #x2D04 #x7001 #x9501
@@ -476,11 +509,26 @@
   :rule-classes (:type-prescription))
 
 
+(in-theory (disable get-reg get-prog u8p set-prog get-pc 
+			       mod set-reg u8-xor u8+ u8+-carry-bit 
+			       u8-and u8-neg u8-set-bit
+			       u8-dec
+			       u8-carried-+
+			       u8-carried-+-carry-bit
+			       u8-dec-sign-flag u8-dec-negative-flag
+			       u8-dec-overflow-flag u8-dec-zero-flag
+			       set-doublereg get-doublereg
+			       pc-multicycle
+			       advance-cycle
+			       set-pc
+			       pc-cycle-increment))
 
 (DEFTHM add-32-pc-progress
   (implies (and (has-prog-mems *add-32* cpu (get-pc cpu))
 		(<= 96 (get-doublereg cpu 26))
 		(<= 96 (get-doublereg cpu 28))
+		(<= 96 (get-doublereg cpu 30))
+		;(natp (get-pc cpu))
 		)
 	   (equal 
 	    ;(get-reg (cpu-n-step 5 cpu) 16)
@@ -490,12 +538,18 @@
 	;	     2)
 	    ;42
 
-	    (get-reg (cpu-n-step 5 cpu) 2)
-	    (u8-carried-+
-	     (get-reg cpu (get-doublereg cpu 26))
-	     (get-reg cpu (get-doublereg cpu 28))
-	     nil)
-		     
+	    ;(get-reg (cpu-n-step 5 cpu) 2)
+	    ;(u8-carried-+
+	    ; (get-reg cpu (get-doublereg cpu 26))
+	    ; (get-reg cpu (get-doublereg cpu 28))
+	    ; nil)
+		
+	    
+	    ;(u8-get-bit (get-reg (cpu-n-step 7 cpu) *status-reg*) *negative-flag*)
+	    ;nil
+	    
+	    (get-pc (cpu-n-step 8 cpu))
+	    (+ 2 (get-pc cpu))
 
 	    ;(get-pc (cpu-n-step 7 cpu))
 	    ;(+ 7 (get-pc cpu))
@@ -513,5 +567,166 @@
 			       u8-dec-overflow-flag u8-dec-zero-flag
 			       set-doublereg get-doublereg
 			       pc-multicycle
+			       advance-cycle
+			       set-pc
 			       pc-cycle-increment)
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+(defun run-add32-loop (cpu)
+  (cpu-n-step 6 cpu))
+
+(defconst *add-32-inner-loop* (list
+  #x902d ; LD R2,X+
+  #x9039 ; LD R3,Y+
+  #x1c23 ; ADC R2,R3
+  #x9221 ; ST Z+,R2
+  #x950a ; DEC R16
+  #xf7d2 ; BRPL ADD_32_TO_32_TOP
+  ))
+
+(defthm add-32-inner-loop
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(<= 96 (get-doublereg cpu 26))
+		(<= 96 (get-doublereg cpu 28))
+		(<= 96 (get-doublereg cpu 30))	
+		(< 0 (get-reg cpu 16))
+		(<= (get-reg cpu 16) 128)
+		(natp (get-pc cpu)))
+	   (equal (get-pc (run-add32-loop cpu))
+		  (get-pc cpu)))
+  :hints (("Goal"
+	   :in-theory (enable u8-dec-negative-flag u8-dec)
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+(defthm add-32-inner-loop-last
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(<= 96 (get-doublereg cpu 26))
+		(<= 96 (get-doublereg cpu 28))
+		(<= 96 (get-doublereg cpu 30))	
+		(< 0 (get-reg cpu 16))
+		(equal (get-reg cpu 16) 0)
+		
+		)
+	   (equal (get-pc (run-add32-loop cpu))
+		  (+ 6 (get-pc cpu))))
+  :hints (("Goal"
+	   :in-theory (enable u8-dec-negative-flag u8-dec)
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+(defun read-data (cpu addr len)
+  (if (zp len)
+      nil
+    (cons (get-reg cpu addr)
+	  (read-data cpu (1+ addr) (- len 1)))))
+
+(defthm read-data-append
+  (implies (and (natp len)
+		(natp addr))
+	   (equal (read-data cpu addr (+ 1 len))
+		  (append (read-data cpu addr len)
+			  (list (get-reg cpu (+ len addr)))))))
+
+(defthm read-data-len
+  (implies (natp len)
+	   (equal (len (read-data cpu addr len))
+		  len)))
+
+(defun bytes-to-nat-le (bs)
+  (if (endp bs)
+      0
+    (+ (first bs)
+       (* 256 (bytes-to-nat-le (rest bs))))))
+
+(defthm bytes-to-le-nat-append
+  (equal (bytes-to-nat-le (append x y))
+	 (+ (bytes-to-nat-le x)
+	    (* (expt 256 (len x))
+	       (bytes-to-nat-le y)))))
+
+(defun read-le-nat (cpu addr len)
+  (bytes-to-nat-le (read-data cpu addr len)))
+
+(defthm z-reg-preserved
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(natp x-base) (<= 96 x-base) (<= x-base 150)
+		(natp y-base) (<= 96 y-base) (<= y-base 150)
+		(natp z-base) (<= 200 z-base)
+		(natp iter) (<= iter 32)
+		(natp read-spot) (< read-spot iter)
+		(equal (get-doublereg cpu 26) (+ x-base iter))
+		(equal (get-doublereg cpu 28) (+ y-base iter))
+		(equal (get-doublereg cpu 30) (+ z-base iter))
+
+		)
+	   ;(equal (read-data (run-add32-loop cpu) z-base iter)
+	;	  (read-data cpu z-base iter)))
+	   (equal (get-reg (run-add32-loop cpu) (+ z-base read-spot))
+		  (get-reg cpu (+ z-base read-spot))))
+  :hints (("Goal"
+	   ;:in-theory (disable read-le-nat)
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+(defthm z-mem-preserved
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(natp x-base) (<= 96 x-base) (<= x-base 150)
+		(natp y-base) (<= 96 y-base) (<= y-base 150)
+		(natp z-base) (<= 200 z-base)
+		(natp iter) (<= iter 32)
+		(natp (get-pc cpu))
+		;(natp read-spot) (< read-spot iter)
+		(equal (get-doublereg cpu 26) (+ x-base iter))
+		(equal (get-doublereg cpu 28) (+ y-base iter))
+		(equal (get-doublereg cpu 30) (+ z-base iter))
+
+		)
+	   ;(equal (read-data (run-add32-loop cpu) z-base iter)
+	;	  (read-data cpu z-base iter)))
+	   (equal (read-data (run-add32-loop cpu) z-base iter)
+		  (read-data cpu z-base iter)))
+  :hints (("Goal"
+	   :in-theory (disable run-add32-loop)
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+
+
+;	   (equal ;(read-data cpu addr iter)
+		  ;(read-data (run-add32-loop cpu) addr iter))))
+
+
+
+(defthm add-32-inner-loop-sum
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(natp x-base) (<= 96 x-base) (<= x-base 150)
+		(natp y-base) (<= 96 y-base) (<= y-base 150)
+		(natp z-base) (<= 200 z-base)
+		(natp iter) (<= iter 32)
+		(equal (get-doublereg cpu 26) (+ x-base iter))
+		(equal (get-doublereg cpu 28) (+ y-base iter))
+		(equal (get-doublereg cpu 30) (+ z-base iter))
+
+		(<= 96 (get-doublereg cpu 26)) ; These are redundant, but speed up
+		(<= 96 (get-doublereg cpu 28)) ; the theorem proving a lot... 
+		(<= 96 (get-doublereg cpu 30)) ; Consider removing them later.
+		
+		(< 0 (get-reg cpu 16))
+		(<= (get-reg cpu 16) 128)
+		(natp (get-pc cpu))
+		
+		(equal (+ (read-le-nat cpu x-base iter)
+			  (read-le-nat cpu y-base iter))
+		       (+ (read-le-nat cpu z-base iter)
+			  (if (get-carry-bit cpu)
+			      (expt 256 (1+ iter))
+			    0)))
+		)
+	   (equal (+ (read-le-nat cpu x-base (1+ iter))
+		     (read-le-nat cpu y-base (1+ iter)))
+		  (+ (read-le-nat (run-add32-loop cpu) z-base (1+ iter))
+		     (if (get-carry-bit (run-add32-loop cpu))
+			 (expt 256 (+ 2 iter))
+		       0))))
+	   ;(equal (get-pc (run-add32-loop cpu))
+	;	  (get-pc cpu)))
+  :hints (("Goal"
+	   :in-theory (disable read-le-nat)
 	   :expand (:free (n c) (cpu-n-step n c)))))
