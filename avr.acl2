@@ -663,15 +663,92 @@
 		(<= 96 (get-doublereg cpu 30))
 		(<= 96 z-base)
 		(natp iter)
-		(< (+ z-base iter) (get-doublereg cpu 30))
+		(<= (+ z-base iter) (get-doublereg cpu 30))
 		)
 	   (equal (read-data (run-add32-loop cpu) z-base iter)
 		  (read-data cpu z-base iter)))
   :hints (("Goal"
 	   :in-theory (disable run-add32-loop))))
 
+(defthm add-32-inner-loop-written-reg
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(<= 96 (get-doublereg cpu 26))	
+		(<= 96 (get-doublereg cpu 28))	
+		(<= 96 (get-doublereg cpu 30)))
+	   (equal
+	    (get-reg (run-add32-loop cpu) (get-doublereg cpu 30))
+	    (u8-carried-+ 
+	     (get-reg cpu (get-doublereg cpu 26))
+	     (get-reg cpu (get-doublereg cpu 28))
+	     (get-carry-bit cpu))))
+  :hints (("Goal"
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+(defthm add-32-inner-loop-carry-bit
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+		(<= 96 (get-doublereg cpu 26))	
+		(<= 96 (get-doublereg cpu 28))	
+		(<= 96 (get-doublereg cpu 30)))
+	   (equal
+	    (get-carry-bit (run-add32-loop cpu))
+	    (u8-carried-+-carry-bit 
+	     (get-reg cpu (get-doublereg cpu 26))
+	     (get-reg cpu (get-doublereg cpu 28))
+	     (get-carry-bit cpu))))
+  :hints (("Goal"
+	   :expand (:free (n c) (cpu-n-step n c)))))
+
+(defun countdown (x)
+  (if (zp x)
+      nil
+    (countdown (- x 1))))
+
+(defun iterate-add32-loop (cpu n)
+  (if (zp n)
+      cpu
+    (iterate-add32-loop (run-add32-loop cpu) (- n 1))))
+
+(defun amplify-carry (bit pow)
+  (if bit
+      (expt 256 pow)
+    0))
+
+(defthm add-step
+  (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
+        
+		(natp iter)
+	        
+		(<= 96 (get-doublereg cpu 26))	
+		(<= 96 (get-doublereg cpu 28))	
+		(<= 96 (get-doublereg cpu 30))
+		(not (get-carry-bit cpu))
 
 
+		)
+	   (equal 
+		  (+ (read-le-nat (iterate-add32-loop cpu iter)
+				  (get-doublereg cpu 30)
+				  iter)
+		     (amplify-carry (get-carry-bit (iterate-add32-loop cpu iter)) iter))
+
+		  (+ (read-le-nat cpu
+				  (get-doublereg cpu 26)
+				  iter)
+		     (read-le-nat cpu
+				  (get-doublereg cpu 28)
+				  iter))))
+  :hints (("Goal" :in-theory (disable get-carry-bit run-add32-loop
+				      has-prog-mems amplify-carry)
+	   :induct (countdown iter)
+	 
+	   :do-not-induct t
+	   :do-not '(generalize))))
+	  
+	   
+
+
+  :hints (("Goal"
+	   :expand (:free (n c) (cpu-n-step n c)))))
 
 (defthm add-32-inner-loop-sum
   (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
