@@ -648,49 +648,28 @@
 
 (defthm z-reg-preserved
   (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
-		(natp x-base) (<= 96 x-base) (<= x-base 150)
-		(natp y-base) (<= 96 y-base) (<= y-base 150)
-		(natp z-base) (<= 200 z-base)
-		(natp iter) (<= iter 32)
-		(natp read-spot) (< read-spot iter)
-		(equal (get-doublereg cpu 26) (+ x-base iter))
-		(equal (get-doublereg cpu 28) (+ y-base iter))
-		(equal (get-doublereg cpu 30) (+ z-base iter))
-
+		(<= 96 (get-doublereg cpu 30))
+		(natp read-spot) (<= 96 read-spot) 
+		(< read-spot (get-doublereg cpu 30))
 		)
-	   ;(equal (read-data (run-add32-loop cpu) z-base iter)
-	;	  (read-data cpu z-base iter)))
-	   (equal (get-reg (run-add32-loop cpu) (+ z-base read-spot))
-		  (get-reg cpu (+ z-base read-spot))))
+	   (equal (get-reg (run-add32-loop cpu) read-spot)
+		  (get-reg cpu read-spot)))
   :hints (("Goal"
-	   ;:in-theory (disable read-le-nat)
 	   :expand (:free (n c) (cpu-n-step n c)))))
 
 (defthm z-mem-preserved
   (implies (and (has-prog-mems *add-32-inner-loop* cpu (get-pc cpu))
-		(natp x-base) (<= 96 x-base) (<= x-base 150)
-		(natp y-base) (<= 96 y-base) (<= y-base 150)
-		(natp z-base) (<= 200 z-base)
-		(natp iter) (<= iter 32)
-		(natp (get-pc cpu))
-		;(natp read-spot) (< read-spot iter)
-		(equal (get-doublereg cpu 26) (+ x-base iter))
-		(equal (get-doublereg cpu 28) (+ y-base iter))
-		(equal (get-doublereg cpu 30) (+ z-base iter))
-
+		(natp z-base) (<= 96 z-base)	
+		(<= 96 (get-doublereg cpu 30))
+		(<= 96 z-base)
+		(natp iter)
+		(< (+ z-base iter) (get-doublereg cpu 30))
 		)
-	   ;(equal (read-data (run-add32-loop cpu) z-base iter)
-	;	  (read-data cpu z-base iter)))
 	   (equal (read-data (run-add32-loop cpu) z-base iter)
 		  (read-data cpu z-base iter)))
   :hints (("Goal"
-	   :in-theory (disable run-add32-loop)
-	   :expand (:free (n c) (cpu-n-step n c)))))
+	   :in-theory (disable run-add32-loop))))
 
-
-
-;	   (equal ;(read-data cpu addr iter)
-		  ;(read-data (run-add32-loop cpu) addr iter))))
 
 
 
